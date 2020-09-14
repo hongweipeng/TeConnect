@@ -12,6 +12,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  */
 class TeConnect_Plugin implements Typecho_Plugin_Interface
 {
+    public static $session_key = '__typecho_connect_auth';
     /**
      * 激活插件方法,如果激活失败,直接抛出异常
      * 
@@ -21,13 +22,20 @@ class TeConnect_Plugin implements Typecho_Plugin_Interface
      */
     public static function activate()
     {
-        $info = self::installDb();
-		
-		//SNS帐号登录
-        Helper::addRoute('oauth', '/oauth','TeConnect_Widget','oauth');
-        Helper::addRoute('oauth_callback', '/oauth_callback','TeConnect_Widget','callback');
-		
-		return _t($info);
+		//帐号登录
+        Helper::addAction('teconnect_action', 'TeConnect_Action');
+    }
+
+    public static function hasConnectLogin() {
+        if (!isset($_SESSION)) session_start();
+        return isset($_SESSION[static::$session_key]);
+    }
+
+    public static function nickname() {
+        if (!static::hasConnectLogin()) {
+            return '';
+        }
+        return $_SESSION[static::$session_key]['nickname'];
     }
     
     /**
@@ -39,8 +47,7 @@ class TeConnect_Plugin implements Typecho_Plugin_Interface
      * @throws Typecho_Plugin_Exception
      */
     public static function deactivate(){
-		Helper::removeRoute('oauth');
-		Helper::removeRoute('oauth_callback');
+        Helper::removeAction('teconnect_action');
 	}
     
     /**
@@ -55,9 +62,6 @@ class TeConnect_Plugin implements Typecho_Plugin_Interface
         /** 互联配置 */
         $connect = new Typecho_Widget_Helper_Form_Element_Textarea('connect', NULL, NULL, _t('互联配置'), _t('一行一个配置，格式为：‘type:appid,appkey,title’，如：‘qq:12345678,asdiladaldns,腾讯QQ’'));
 		$form->addInput($connect);
-		
-		$custom = new Typecho_Widget_Helper_Form_Element_Radio('custom',array(1=>_t('是'),0=>'否'),1,_t('是否需要完善资料'),_t('用户使用社会化登录后，是否需要完善昵称、邮箱等信息；选择不需要完善资料则直接使用获取到的昵称'));
-		$form->addInput($custom);
     }
     
     /**
@@ -73,42 +77,7 @@ class TeConnect_Plugin implements Typecho_Plugin_Interface
 	 * 安装数据库
 	 */
 	public static function installDb(){
-		$db = Typecho_Db::get();
-		$type = explode('_', $db->getAdapterName());
-		$type = array_pop($type);
-		$prefix = $db->getPrefix();
-		$scripts = file_get_contents('usr/plugins/TeConnect/'.$type.'.sql');
-		$scripts = str_replace('typecho_', $prefix, $scripts);
-		$scripts = str_replace('%charset%', 'utf8', $scripts);
-		$scripts = explode(';', $scripts);
-		try {
-			foreach ($scripts as $script) {
-				$script = trim($script);
-				if ($script) {
-					$db->query($script, Typecho_Db::WRITE);
-				}
-			}
-			return '建立Typecho互联数据表，插件启用成功';
-		} catch (Typecho_Db_Exception $e) {
-			$code = $e->getCode();
-			if(('Mysql' == $type && 1050 == $code) ||
-					('SQLite' == $type && ('HY000' == $code || 1 == $code))) {
-				try {
-					$script = 'SELECT `uid` from `' . $prefix . 'connect`';
-					$db->query($script, Typecho_Db::READ);
-					return '检测到Typecho互联数据表，Typecho互联插件启用成功';					
-				} catch (Typecho_Db_Exception $e) {
-					$code = $e->getCode();
-					if(('Mysql' == $type && 1054 == $code) ||
-							('SQLite' == $type && ('HY000' == $code || 1 == $code))) {
-						return self::updateDb($db, $type, $prefix);
-					}
-					throw new Typecho_Plugin_Exception('数据表检测失败，Typecho互联插件启用失败。错误号：'.$code);
-				}
-			} else {
-				throw new Typecho_Plugin_Exception('数据表建立失败，Typecho互联插件启用失败。错误号：'.$code);
-			}
-		}
+
 	}
 	
 	public static function show($format='<a href="{url}"><i class="fa fa-{type}"></i> {title}</a>'){
@@ -116,13 +85,18 @@ class TeConnect_Plugin implements Typecho_Plugin_Interface
 		if(empty($list)) return '';
 		$html = '';
 		foreach($list as $type=>$v){
-			$url = Typecho_Common::url('/oauth?type='.$type,Typecho_Widget::Widget('Widget_Options')->index);
+			$url = Typecho_Common::url('/action/teconnect_action?do=oauth&type='.$type, Typecho_Widget::Widget('Widget_Options')->index);
 			$html .= str_replace(
 					array('{type}','{title}','{url}'),
 					array($type,$v['title'],$url),$format);
 		}
 		echo $html;
 	}
+
+	public static function logout_url() {
+        $url = Typecho_Common::url('/action/teconnect_action?do=logout', Typecho_Widget::Widget('Widget_Options')->index);
+        return $url;
+    }
 	
 	public static function options($type=''){
 		static $options = array();
